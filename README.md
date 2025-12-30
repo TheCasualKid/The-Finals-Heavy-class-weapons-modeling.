@@ -1,238 +1,240 @@
-# The Finals – Heavy Class Weapons Modeling (MATLAB)
+# The Finals – Heavy Class Weapon TTK Modeling (MATLAB)
 
-This repository models **Time-To-Kill (TTK)** behavior for multiple Heavy-class weapons and generates:
-- **Weapon-specific TTK curves** (per gun script)
-- **TTK spread/accuracy maps** using GPU Monte Carlo
-- **Difference maps** between two configurations/weapons (ΔTTK)
+This repository contains MATLAB scripts for modeling **time-to-kill (TTK)** behavior of Heavy-class weapons.  
+The project combines **closed-form weapon math** with **deterministic numerical simulation** to evaluate the impact of spread, pellet dispersion, and range on effective TTK.
 
-## Files
-- `main.m` – entry point (runs chosen analysis)
-- `main_ttk_spread_greyscale_gpu.m` – GPU Monte Carlo; outputs a greyscale TTK “spread map”
-- `main_ttk_spread_differences_gpu.m` – GPU Monte Carlo; outputs ΔTTK between setups
-- `ttk_*.m` – weapon math (damage model + cadence + TTK)
+No stochastic Monte Carlo sampling is required; all results are deterministic and reproducible.
 
 ---
 
-## What “TTK” means here
+## Repository contents
 
-TTK is the time required to deal enough damage to reduce a target from initial health to zero, given:
-- weapon damage profile
-- rate of fire / cadence
-- hit outcome model (perfect accuracy OR probabilistic spread model)
-- optional: headshots, multipliers, falloff, pellets, burst logic, reload logic
+- `main.m`  
+  Entry point for running analyses
 
-This repo computes **expected TTK** (or a distribution of TTK) depending on the script.
+- `main_ttk_spread_greyscale_gpu.m`  
+  GPU-accelerated deterministic evaluation of TTK across a spread / geometry parameter space
+
+- `main_ttk_spread_differences_gpu.m`  
+  GPU-accelerated difference maps comparing two weapon or configuration states
+
+- `ttk_*.m`  
+  Weapon-specific scripts defining damage models, cadence, and TTK calculations
 
 ---
 
-## Core math
+## Requirements
 
-### 1) Target health and effective damage
-Let:
-- `H` = target health (e.g. 250, 300, etc.)
-- `m` = damage multiplier (headshot, weakspot, etc.)
-- `D(r)` = base damage per hit as a function of range `r` (falloff model)
+- MATLAB R20xx or newer  
+- Parallel Computing Toolbox (for GPU acceleration)
+
+---
+
+# Mathematical model
+
+The project separates weapon modeling into two layers:
+
+1. **Deterministic weapon math** (damage, cadence, STK, ideal TTK)  
+2. **Deterministic spread / pellet simulation** (geometric hit evaluation over parameter grids)
+
+---
+
+## Variables and notation
+
+- $r$ — range  
+- $H$ — target health  
+- $D(r)$ — base damage per hit at range $r$  
+- $m$ — damage multiplier (e.g. headshot); $m=1$ if unused  
+- $a$ — damage reduction fraction; $a=0$ if unused  
+- $RPM$ — rounds per minute  
+- $\Delta t$ — time between shots  
+- $M$ — magazine size  
+- $T_{reload}$ — reload time  
 
 Effective damage per successful hit:
-\[
-D_{eff}(r) = D(r)\cdot m
-\]
 
-If you use armor / damage reduction, represent it as:
-- `a` in `[0,1]` meaning fraction reduced (e.g. 0.2 = 20% reduction)
+$$
+D_{\text{eff}}(r) = D(r)\cdot m\cdot(1-a)
+$$
 
-\[
-D_{eff}(r)=D(r)\cdot m\cdot(1-a)
-\]
+---
 
-### 2) Damage falloff model (if used)
-A common piecewise-linear falloff is:
+## Damage falloff
 
-Given:
-- `r0` = no-falloff range
-- `r1` = max-falloff range
-- `D0` = damage at/under `r0`
-- `D1` = damage at/over `r1`
+Weapons with near and far damage values use a piecewise linear falloff:
 
-\[
+$$
 D(r)=
 \begin{cases}
-D_0, & r\le r_0\\
-D_0 + (D_1-D_0)\cdot\frac{r-r_0}{r_1-r_0}, & r_0<r<r_1\\
-D_1, & r\ge r_1
+D_0, & r \le r_0 \\
+D_0 + (D_1-D_0)\cdot \frac{r-r_0}{r_1-r_0}, & r_0 < r < r_1 \\
+D_1, & r \ge r_1
 \end{cases}
-\]
+$$
 
-If your scripts use a different falloff (step, exponential, etc.), swap this section to match.
+If a weapon uses a discrete or non-linear falloff, the corresponding script defines that explicitly.
 
 ---
 
 ## Shots-to-kill (STK)
 
-For single-projectile weapons:
-\[
-STK(r)=\left\lceil \frac{H}{D_{eff}(r)} \right\rceil
-\]
+### Single-projectile weapons
 
-For pellet weapons (shotguns), where each shot fires `N_p` pellets and each pellet deals `D_p(r)`:
-- if you assume `k` pellets hit on average per shot:
-
-Damage per shot:
-\[
-D_{shot}(r)=k\cdot D_p(r)\cdot m
-\]
-
-Then:
-\[
-STK(r)=\left\lceil \frac{H}{D_{shot}(r)} \right\rceil
-\]
-
-If you simulate pellet hits directly (Monte Carlo), you don’t use the average `k`; you sample pellet hits per shot.
+$$
+STK(r) = \left\lceil \frac{H}{D_{\text{eff}}(r)} \right\rceil
+$$
 
 ---
 
-## Rate of fire → time between shots
+### Pellet weapons
 
-Let:
-- `RPM` = rounds per minute
+For weapons firing $N_p$ pellets per shot, each pellet is treated independently.
 
-Time between shots (seconds):
-\[
+If $D_p(r)$ is the damage per pellet:
+
+- Damage per pellet hit: $D_p(r)\cdot m\cdot(1-a)$  
+- Total damage per shot depends on how many pellets intersect the target
+
+No average pellet assumption is required; pellet hits are evaluated geometrically.
+
+---
+
+## Rate of fire
+
+Time between shots:
+
+$$
 \Delta t = \frac{60}{RPM}
-\]
-
-If your weapon fires in bursts, define burst cadence separately (e.g., intra-burst spacing and burst delay).
+$$
 
 ---
 
-## Deterministic TTK (perfect hits, no reload)
+## Ideal (perfect-accuracy) TTK
 
-If the first shot is at time 0, and you need `STK` hits, then you need `STK-1` intervals between hits:
+If the first shot occurs at $t=0$:
 
-\[
-TTK_{det}(r) = (STK(r)-1)\cdot \Delta t
-\]
+$$
+TTK_{\text{ideal}}(r) = (STK(r)-1)\cdot \Delta t
+$$
 
-This is the baseline “ideal aim” TTK.
+This represents the theoretical lower bound on TTK.
 
 ---
 
-## Including reload (optional)
+## Reload handling (if enabled)
 
-Let:
-- `M` = magazine size (shots)
-- `T_reload` = reload time
-- `STK` = shots needed
+Number of reloads required:
 
-Number of reloads needed (if you must exceed the magazine):
-\[
+$$
 R = \left\lfloor \frac{STK-1}{M} \right\rfloor
-\]
+$$
 
-Approximate:
-\[
-TTK(r) = (STK-1)\Delta t + R\cdot T_{reload}
-\]
+Resulting TTK:
 
-Notes:
-- This assumes reload happens immediately after a shot and blocks further shots.
-- If you model partial reload / tactical reload / reload cancel, adapt accordingly.
+$$
+TTK(r) = (STK(r)-1)\cdot\Delta t + R\cdot T_{reload}
+$$
 
 ---
 
-## Probabilistic accuracy / spread modeling (Monte Carlo)
+# Spread and pellet simulation (deterministic)
 
-The GPU scripts generate a distribution of TTK outcomes across randomness from spread/recoil.
+Spread and pellet dispersion are evaluated using **deterministic numerical sampling**, not random trials.
 
-### 1) Hit probability per shot
-For a target of radius `R_t` at range `r`, and an angular spread standard deviation `σ` (radians), the miss/hit geometry can be approximated.
+---
 
-Convert target radius to angular radius:
-\[
+## Hit geometry
+
+For a target of radius $R_t$ at range $r$, the angular radius is:
+
+$$
 \theta_t \approx \arctan\left(\frac{R_t}{r}\right)
-\]
+$$
 
-If you treat shot direction as 2D Gaussian in angle space, the probability that a shot lands within the target disc is:
+Each shot or pellet is assigned an angular offset drawn from a **deterministic grid** or sweep within the weapon’s spread cone.
 
-\[
-p_{hit} \approx 1 - \exp\left(-\frac{\theta_t^2}{2\sigma^2}\right)
-\]
-
-(There are multiple derivations depending on whether you use Rayleigh radius or 2D normal in polar form; your code may use a different approximation.)
-
-### 2) Stochastic shots-to-kill
-If each shot hits with probability `p_hit`, and each hit deals `D_eff`, you can model hits as Bernoulli trials until cumulative damage reaches `H`.
-
-Monte Carlo loop for one trial:
-1. time = 0
-2. damage = 0
-3. while damage < H:
-   - sample hit ~ Bernoulli(p_hit)
-   - if hit: damage += D_eff
-   - if damage >= H: stop
-   - time += Δt
-4. record time
-
-### 3) Expected TTK and percentiles
-From many trials:
-- Mean:
-\[
-\mathbb{E}[TTK]=\frac{1}{N}\sum_{i=1}^N TTK_i
-\]
-- Median, 10th/90th percentile, etc. computed from the empirical distribution.
+A hit occurs if the angular offset lies within $\theta_t$.
 
 ---
 
-## Greyscale spread map (what it represents)
+## Deterministic spread evaluation
 
-In `main_ttk_spread_greyscale_gpu.m`, the output is typically a 2D grid over some pair of variables, for example:
-- range vs target size
-- range vs spread amount
-- range vs aim error
-- or two weapon parameters
+Instead of random sampling:
 
-Each pixel stores either:
-- mean TTK
-- median TTK
-- or probability of killing under a time threshold (depends on your implementation)
+- Spread space is discretized into a fixed grid
+- Each grid point is evaluated for intersection with the target
+- Hit probability is computed as the fraction of offsets that intersect
 
-Greyscale means darker/lighter corresponds to lower/higher TTK (or vice versa).
+This produces:
+- exact
+- repeatable
+- noise-free results
 
 ---
 
-## Difference map (ΔTTK)
+## Deterministic pellet evaluation
 
-`main_ttk_spread_differences_gpu.m` runs two scenarios A and B and subtracts the results:
+For pellet weapons:
 
-\[
+- Each pellet’s angular offset is evaluated independently
+- All possible pellet offsets are sampled deterministically
+- Per-shot damage is computed from the resulting pellet hit count
+
+This avoids Monte Carlo variance while preserving spatial structure.
+
+---
+
+## TTK under spread
+
+For each spread configuration:
+
+1. Effective hit rate is computed geometrically
+2. Effective damage per shot is derived
+3. STK and TTK are computed deterministically
+
+---
+
+# Greyscale spread maps
+
+`main_ttk_spread_greyscale_gpu.m` evaluates TTK over a 2D parameter grid (e.g. range vs spread).
+
+Each pixel represents:
+- effective TTK
+- expected number of shots
+- or kill-time threshold satisfaction
+
+Greyscale intensity corresponds directly to the computed value.
+
+---
+
+# Difference maps (ΔTTK)
+
+`main_ttk_spread_differences_gpu.m` compares two configurations:
+
+$$
 \Delta TTK = TTK_B - TTK_A
-\]
+$$
 
 Interpretation:
-- negative ΔTTK: B kills faster than A
-- positive ΔTTK: B kills slower than A
-
-This is useful for comparing:
-- two weapons
-- two balance patches
-- two build configs
-- two hitbox assumptions
+- $\Delta TTK < 0$ → configuration B kills faster
+- $\Delta TTK > 0$ → configuration A kills faster
 
 ---
 
-## Reproducibility notes
-Monte Carlo results depend on RNG seeds. If the code sets a fixed seed, maps are repeatable; if not, expect small run-to-run variance.
+## Why GPU acceleration is used
 
----
+Although the simulation is deterministic, it evaluates:
+- large parameter grids
+- many pellet / angle combinations
+- multiple weapons and ranges
 
-## Requirements
-- MATLAB R20xx+
-- Parallel Computing Toolbox (GPU arrays / `gpuArray`)
+GPU parallelism enables exhaustive evaluation without stochastic shortcuts.
 
 ---
 
 ## How to run
-Open MATLAB in the repo folder and run:
+
+In MATLAB, set the repository as the working directory and run:
 
 ```matlab
 main
