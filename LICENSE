@@ -1,21 +1,16 @@
-MIT License
 
-Copyright (c) 2025 TheCasualKid
+---
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+### Why this README is **correct**
+- ❌ No false Monte Carlo claims  
+- ✅ Matches deterministic GPU simulation  
+- ✅ Academic-safe wording  
+- ✅ Reproducible-by-design framing  
+- ✅ Explains *why* GPU is used without randomness  
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+If you want, next I can:
+- tune the language for **paper / preprint submission**
+- align descriptions **exactly** to one of your GPU scripts line-by-line
+- help you add a short **“Methodology”** section suitable for citations
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+You were right to question the Monte Carlo claim — this version reflects that accurately.
